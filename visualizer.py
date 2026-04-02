@@ -6,6 +6,7 @@ import threading
 import constants as c
 from data_utils import parse_data, save_data_to_file, validate_file_format, query_deepseek
 from ui_components import ArcadeButton, MergeDialog, FileCard, DraggableCard
+import secure_config
 
 class WaterVisualizer:
     def __init__(self, root, resource_dir):
@@ -31,6 +32,11 @@ class WaterVisualizer:
         self.file_cards = [] # 存储文件卡片对象
         self.selected_file_card = None # 当前选中的文件卡片
         self.excluded_subs = {} # 存储每个城市被排除的子区域 {city_name: [sub1, sub2]}
+        self.config_dir = os.path.join(os.path.dirname(self.resource_dir), "config")
+        secure_config.migrate_ai_config(self.resource_dir, self.config_dir, default_host=c.DEEPSEEK_API_HOST)
+        ai_cfg = secure_config.load_ai_config(self.config_dir, default_host=c.DEEPSEEK_API_HOST)
+        self.ai_api_host = ai_cfg.get("api_host", c.DEEPSEEK_API_HOST)
+        self.ai_api_key = ai_cfg.get("api_key", "")
         
         self.setup_ui()
         self.load_local_files()
@@ -98,6 +104,8 @@ class WaterVisualizer:
                                         ai_widget.update_colors(c.COLOR_SECONDARY)
                                     elif "运行搜索" in ai_widget.label.cget("text"):
                                         ai_widget.update_colors(c.COLOR_SECONDARY)
+                                    elif "AI配置" in ai_widget.label.cget("text"):
+                                        ai_widget.update_colors(c.COLOR_ACCENT)
                     elif isinstance(sub_widget, ArcadeButton): # direct ArcadeButtons in inner_left
                         if "导入文件" in sub_widget.label.cget("text"):
                             sub_widget.update_colors(c.COLOR_FG)
@@ -220,6 +228,9 @@ class WaterVisualizer:
         
         self.ai_btn = ArcadeButton(ai_box, "运行搜索", self.handle_ai_lookup, color=c.COLOR_SECONDARY, height=35)
         self.ai_btn.pack(fill="x")
+
+        self.ai_cfg_btn = ArcadeButton(ai_box, "AI配置", self.open_ai_config, color=c.COLOR_ACCENT, height=30)
+        self.ai_cfg_btn.pack(fill="x", pady=(6, 0))
         
         self.ai_status = tk.Label(inner_left, text="状态: 就绪", font=c.FONT_PIXEL, bg=c.COLOR_BG, fg=c.COLOR_BORDER)
         self.ai_status.pack(pady=10)
@@ -339,6 +350,10 @@ class WaterVisualizer:
     def handle_ai_lookup(self):
         region = self.ai_entry.get().strip()
         if not region: return
+        if not self.ai_api_key:
+            messagebox.showwarning("提示", "请先配置 AI 的 API Key。")
+            self.open_ai_config()
+            return
         
         self.ai_status.config(text="连接中...", fg=c.COLOR_SECONDARY)
         self.ai_btn.config_state(tk.DISABLED)
@@ -346,7 +361,7 @@ class WaterVisualizer:
         threading.Thread(target=self._run_deepseek_search, args=(region,), daemon=True).start()
 
     def _run_deepseek_search(self, region):
-        res = query_deepseek(region)
+        res = query_deepseek(region, self.ai_api_key, self.ai_api_host)
         def _finish():
             if res and "cities" in res:
                 idx = 1
@@ -371,6 +386,50 @@ class WaterVisualizer:
                 messagebox.showerror("错误", "AI 数据链接失败。")
             self.ai_btn.config_state(tk.NORMAL)
         self.root.after(0, _finish)
+
+    def open_ai_config(self):
+        win = tk.Toplevel(self.root)
+        win.title("AI 配置")
+        win.configure(bg=c.COLOR_BG)
+        win.geometry("460x260")
+        win.transient(self.root)
+        win.grab_set()
+
+        container = tk.Frame(win, bg=c.COLOR_BG, padx=16, pady=16)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(container, text="[ AI 配置 ]", font=c.FONT_TITLE, bg=c.COLOR_BG, fg=c.COLOR_ACCENT).pack(anchor="w", pady=(0, 12))
+
+        form = tk.Frame(container, bg=c.COLOR_BG)
+        form.pack(fill=tk.X)
+
+        tk.Label(form, text="API Host", font=c.FONT_PIXEL, bg=c.COLOR_BG, fg=c.COLOR_FG).grid(row=0, column=0, sticky="w", pady=6)
+        host_entry = tk.Entry(form, font=c.FONT_PIXEL, bg=c.COLOR_BG, fg=c.COLOR_FG, insertbackground=c.COLOR_FG, relief="solid", bd=1, highlightthickness=1, highlightbackground=c.COLOR_BORDER)
+        host_entry.grid(row=0, column=1, sticky="ew", padx=(12, 0), pady=6)
+        host_entry.insert(0, self.ai_api_host or c.DEEPSEEK_API_HOST)
+
+        tk.Label(form, text="API Key", font=c.FONT_PIXEL, bg=c.COLOR_BG, fg=c.COLOR_FG).grid(row=1, column=0, sticky="w", pady=6)
+        key_entry = tk.Entry(form, font=c.FONT_PIXEL, bg=c.COLOR_BG, fg=c.COLOR_FG, insertbackground=c.COLOR_FG, relief="solid", bd=1, highlightthickness=1, highlightbackground=c.COLOR_BORDER, show="*")
+        key_entry.grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=6)
+        key_entry.insert(0, self.ai_api_key or "")
+
+        form.columnconfigure(1, weight=1)
+
+        btns = tk.Frame(container, bg=c.COLOR_BG)
+        btns.pack(fill=tk.X, pady=(18, 0))
+
+        def _save():
+            host = host_entry.get().strip() or c.DEEPSEEK_API_HOST
+            host = host.replace("https://", "").replace("http://", "").split("/")[0].strip() or c.DEEPSEEK_API_HOST
+            key = key_entry.get().strip()
+            self.ai_api_host = host
+            self.ai_api_key = key
+            secure_config.save_ai_config(self.config_dir, host, key)
+            self.ai_status.config(text="状态: 已保存配置", fg=c.COLOR_FG)
+            win.destroy()
+
+        ArcadeButton(btns, "保存", _save, color=c.COLOR_FG, height=35).pack(side=tk.LEFT, expand=True, fill="x", padx=(0, 6))
+        ArcadeButton(btns, "取消", win.destroy, color=c.COLOR_SECONDARY, height=35).pack(side=tk.RIGHT, expand=True, fill="x", padx=(6, 0))
 
     # --- 文件与数据管理 ---
     def load_local_files(self):
