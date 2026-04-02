@@ -2,7 +2,6 @@ import re
 import os
 import json
 import http.client
-from constants import DEEPSEEK_API_KEY, DEEPSEEK_API_HOST
 
 # --- 数据解析与格式校验 ---
 def parse_data(file_path):
@@ -80,7 +79,9 @@ def validate_file_format(file_path):
         return False
 
 # --- DeepSeek API 调用 ---
-def query_deepseek(region_name):
+def query_deepseek(region_name, api_key, api_host):
+    if not api_key:
+        return None
     prompt = f"""
     请查找“{region_name}”及其下属地区的年平均降水量数据。
     要求：
@@ -117,11 +118,11 @@ def query_deepseek(region_name):
     
     headers = {
         'Content-Type': 'application/json',
-        'Authorization': f'Bearer {DEEPSEEK_API_KEY}'
+        'Authorization': f'Bearer {api_key}'
     }
     
     try:
-        conn = http.client.HTTPSConnection(DEEPSEEK_API_HOST)
+        conn = http.client.HTTPSConnection(api_host)
         conn.request("POST", "/v1/chat/completions", payload, headers)
         res = conn.getresponse()
         data = res.read()

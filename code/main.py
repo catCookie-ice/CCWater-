@@ -18,8 +18,8 @@ def main():
     target_dir_name = "CCWater"
     target_path = os.path.join(application_path, target_dir_name)
     
-    # 如果当前运行目录不是目标目录，则进行自我部署
-    if os.path.basename(application_path) != target_dir_name:
+    # 仅在 .exe 模式下进行自我部署；开发环境运行 main.py 不做目录强制部署
+    if getattr(sys, 'frozen', False) and os.path.basename(application_path) != target_dir_name:
         print(f"程序不在 {target_dir_name} 目录中，正在进行自我部署...")
         
         # 创建目标目录
