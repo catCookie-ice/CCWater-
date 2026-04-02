@@ -1,5 +1,5 @@
 # --- 配置信息 ---
-DEEPSEEK_API_KEY = "sk-88d9b8e9aa9149bfaca6a0dd090795b9"
+DEEPSEEK_API_KEY = ""
 DEEPSEEK_API_HOST = "api.deepseek.com"
 
 # --- 复古像素风调色板 (做旧淡黄版 - 暗色模式) ---
