@@ -1,0 +1,81 @@
+# --- 配置信息 ---
+DEEPSEEK_API_KEY = "sk-88d9b8e9aa9149bfaca6a0dd090795b9"
+DEEPSEEK_API_HOST = "api.deepseek.com"
+
+# --- 复古像素风调色板 (做旧淡黄版 - 暗色模式) ---
+DARK_COLOR_BG = "#1a1a1a"          # 背景：非常深的灰色
+DARK_COLOR_FG = "#F5DEB3"          # 文字：小麦色 (淡黄)
+DARK_COLOR_ACCENT = "#B0C4DE"      # 强调：淡钢蓝 (柔和蓝)
+DARK_COLOR_SECONDARY = "#DDA0DD"   # 次要：梅子色 (柔和紫)
+DARK_COLOR_BORDER = "#696969"      # 默认边框：暗灰色
+DARK_COLOR_BORDER_HL = "#A9A9A9"   # 高亮边框：深灰色
+DARK_COLOR_BAR = "#CD853F"         # 柱状图：秘鲁色 (做旧橙棕)
+DARK_COLOR_SHADOW = "#36454F"      # 阴影颜色：木炭色
+
+# --- 复古像素风调色板 (亮色模式) ---
+LIGHT_COLOR_BG = "#F0F0F0"         # 背景：浅灰色
+LIGHT_COLOR_FG = "#333333"         # 文字：深灰色
+LIGHT_COLOR_ACCENT = "#6495ED"     # 强调：矢车菊蓝 (蓝色)
+LIGHT_COLOR_SECONDARY = "#8A2BE2"  # 次要：蓝紫色
+LIGHT_COLOR_BORDER = "#CCCCCC"     # 默认边框：浅灰色
+LIGHT_COLOR_BORDER_HL = "#999999"  # 高亮边框：中灰色
+LIGHT_COLOR_BAR = "#4682B4"        # 柱状图：钢蓝 (蓝色)
+LIGHT_COLOR_SHADOW = "#AAAAAA"     # 阴影颜色：中浅灰色
+
+# 初始颜色设置为暗色模式
+COLOR_BG = DARK_COLOR_BG
+COLOR_FG = DARK_COLOR_FG
+COLOR_ACCENT = DARK_COLOR_ACCENT
+COLOR_SECONDARY = DARK_COLOR_SECONDARY
+COLOR_BORDER = DARK_COLOR_BORDER
+COLOR_BORDER_HL = DARK_COLOR_BORDER_HL
+COLOR_BAR = DARK_COLOR_BAR
+COLOR_SHADOW = DARK_COLOR_SHADOW
+
+FONT_PIXEL = ("Consolas", 10, "bold")
+FONT_TITLE = ("Consolas", 16, "bold")
+FONT_UI = ("Consolas", 9)
+
+def update_global_colors(theme):
+    global COLOR_BG, COLOR_FG, COLOR_ACCENT, COLOR_SECONDARY, COLOR_BORDER, COLOR_BORDER_HL, COLOR_BAR, COLOR_SHADOW
+    if theme == "light":
+        COLOR_BG = LIGHT_COLOR_BG
+        COLOR_FG = LIGHT_COLOR_FG
+        COLOR_ACCENT = LIGHT_COLOR_ACCENT
+        COLOR_SECONDARY = LIGHT_COLOR_SECONDARY
+        COLOR_BORDER = LIGHT_COLOR_BORDER
+        COLOR_BORDER_HL = LIGHT_COLOR_BORDER_HL
+        COLOR_BAR = LIGHT_COLOR_BAR
+        COLOR_SHADOW = LIGHT_COLOR_SHADOW
+    else:
+        COLOR_BG = DARK_COLOR_BG
+        COLOR_FG = DARK_COLOR_FG
+        COLOR_ACCENT = DARK_COLOR_ACCENT
+        COLOR_SECONDARY = DARK_COLOR_SECONDARY
+        COLOR_BORDER = DARK_COLOR_BORDER
+        COLOR_BORDER_HL = DARK_COLOR_BORDER_HL
+        COLOR_BAR = DARK_COLOR_BAR
+        COLOR_SHADOW = DARK_COLOR_SHADOW
+    
+    return {
+        "COLOR_BG": COLOR_BG,
+        "COLOR_FG": COLOR_FG,
+        "COLOR_ACCENT": COLOR_ACCENT,
+        "COLOR_SECONDARY": COLOR_SECONDARY,
+        "COLOR_BORDER": COLOR_BORDER,
+        "COLOR_BORDER_HL": COLOR_BORDER_HL,
+        "COLOR_BAR": COLOR_BAR,
+        "COLOR_SHADOW": COLOR_SHADOW
+    }
+
+def get_current_colors():
+    return {
+        "COLOR_BG": COLOR_BG,
+        "COLOR_FG": COLOR_FG,
+        "COLOR_ACCENT": COLOR_ACCENT,
+        "COLOR_SECONDARY": COLOR_SECONDARY,
+        "COLOR_BORDER": COLOR_BORDER,
+        "COLOR_BORDER_HL": COLOR_BORDER_HL,
+        "COLOR_BAR": COLOR_BAR,
+        "COLOR_SHADOW": COLOR_SHADOW
+    }
