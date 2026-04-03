@@ -3,6 +3,8 @@ from tkinter import messagebox, filedialog
 import os
 import shutil
 import threading
+import math
+import tkinter.font as tkfont
 import constants as c
 from data_utils import parse_data, save_data_to_file, validate_file_format, query_deepseek
 from ui_components import ArcadeButton, MergeDialog, FileCard, DraggableCard
@@ -29,9 +31,13 @@ class WaterVisualizer:
         self.detail_city = None 
         self.current_theme = "dark" # 默认主题为暗色
         self.clear_mode = False # 默认关闭清晰模式
+        self.chart_mode = "bar"
         self.file_cards = [] # 存储文件卡片对象
         self.selected_file_card = None # 当前选中的文件卡片
         self.excluded_subs = {} # 存储每个城市被排除的子区域 {city_name: [sub1, sub2]}
+        self._pie_label_fulltext = {}
+        self._tooltip_win = None
+        self._tooltip_label = None
         self.config_dir = os.path.join(os.path.dirname(self.resource_dir), "config")
         secure_config.migrate_ai_config(self.resource_dir, self.config_dir, default_host=c.DEEPSEEK_API_HOST)
         ai_cfg = secure_config.load_ai_config(self.config_dir, default_host=c.DEEPSEEK_API_HOST)
@@ -67,6 +73,12 @@ class WaterVisualizer:
     def toggle_clear_mode(self):
         self.clear_mode = not self.clear_mode
         self.apply_theme()
+        self.draw_chart()
+
+    def toggle_chart_mode(self):
+        self.chart_mode = "pie" if self.chart_mode == "bar" else "bar"
+        label = "饼状图" if self.chart_mode == "pie" else "柱状图"
+        self.chart_mode_toggle_btn.label.config(text=f" {label} ")
         self.draw_chart()
 
     def apply_theme(self):
@@ -127,6 +139,7 @@ class WaterVisualizer:
         self.back_btn.update_colors(c.COLOR_ACCENT)
         self.theme_toggle_btn.update_colors(c.COLOR_SECONDARY) # 更新主题切换按钮
         self.clear_mode_toggle_btn.update_colors(c.COLOR_ACCENT) # 更新清晰模式切换按钮
+        self.chart_mode_toggle_btn.update_colors(c.COLOR_FG)
         for widget in self.top_bar.winfo_children():
             if isinstance(widget, tk.Label):
                 widget.config(bg=c.COLOR_BG, fg=c.COLOR_FG)
@@ -259,6 +272,9 @@ class WaterVisualizer:
         self.clear_mode_toggle_btn = ArcadeButton(self.top_bar, "清晰模式", self.toggle_clear_mode, color=c.COLOR_ACCENT, width=100, height=40)
         self.clear_mode_toggle_btn.pack(side=tk.RIGHT, padx=10, pady=10)
 
+        self.chart_mode_toggle_btn = ArcadeButton(self.top_bar, "柱状图", self.toggle_chart_mode, color=c.COLOR_FG, width=100, height=40)
+        self.chart_mode_toggle_btn.pack(side=tk.RIGHT, padx=10, pady=10)
+
         # 画布容器
         self.chart_container = tk.Frame(self.main_area, bg=c.COLOR_BG, bd=2, relief="solid", highlightbackground=c.COLOR_BORDER_HL, highlightthickness=2)
         self.chart_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -271,6 +287,8 @@ class WaterVisualizer:
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_canvas_drop)
         self.canvas.bind("<Double-Button-1>", self.on_canvas_double_click)
+        self.canvas.bind("<Motion>", self._on_canvas_motion)
+        self.canvas.bind("<Leave>", self._hide_tooltip)
 
         # --- 右侧：筛选区 ---
         self.right_sidebar = tk.Frame(self.paned, bg=c.COLOR_BG, width=260)
@@ -578,6 +596,7 @@ class WaterVisualizer:
 
     def draw_chart(self):
         self.canvas.delete("all")
+        self._pie_label_fulltext = {}
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
         if w < 100 or h < 100 or not self.current_data:
             self.canvas.create_text(w/2, h/2, text="[ 插入硬币 / 加载数据 ]", font=c.FONT_TITLE, fill=c.COLOR_BORDER)
@@ -596,6 +615,13 @@ class WaterVisualizer:
 
         if not plot_data: return
         plot_data.sort(key=lambda x: x[1], reverse=True)
+
+        if self.chart_mode == "pie":
+            self._draw_pie_chart(plot_data, w, h)
+            if not self.clear_mode:
+                for y in range(0, h, 3):
+                    self.canvas.create_line(0, y, w, y, fill="#000000", stipple="gray25", state="disabled")
+            return
 
         ml, mr, mt, mb = 80, 40, 80, 100
         cw, ch = w - ml - mr, h - mt - mb
@@ -644,20 +670,310 @@ class WaterVisualizer:
             for y in range(0, h, 3):
                 self.canvas.create_line(0, y, w, y, fill="#000000", stipple="gray25", state="disabled")
 
+    def _draw_pie_chart(self, plot_data, w, h):
+        def _hex_to_rgb(s):
+            s = (s or "").strip()
+            if s.startswith("#"):
+                s = s[1:]
+            if len(s) == 3:
+                s = "".join(ch * 2 for ch in s)
+            try:
+                return int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+            except Exception:
+                return 0, 0, 0
+
+        def _srgb_to_linear(c_):
+            c_ = c_ / 255.0
+            return c_ / 12.92 if c_ <= 0.04045 else ((c_ + 0.055) / 1.055) ** 2.4
+
+        def _rel_lum(rgb):
+            r_, g_, b_ = rgb
+            r_l = _srgb_to_linear(r_)
+            g_l = _srgb_to_linear(g_)
+            b_l = _srgb_to_linear(b_)
+            return 0.2126 * r_l + 0.7152 * g_l + 0.0722 * b_l
+
+        def _contrast_ratio(c1, c2):
+            l1 = _rel_lum(_hex_to_rgb(c1))
+            l2 = _rel_lum(_hex_to_rgb(c2))
+            hi = max(l1, l2)
+            lo = min(l1, l2)
+            return (hi + 0.05) / (lo + 0.05)
+
+        def _blend(c1, c2, t):
+            r1, g1, b1 = _hex_to_rgb(c1)
+            r2, g2, b2 = _hex_to_rgb(c2)
+            r = int(round(r1 * (1 - t) + r2 * t))
+            g = int(round(g1 * (1 - t) + g2 * t))
+            b = int(round(b1 * (1 - t) + b2 * t))
+            return f"#{r:02x}{g:02x}{b:02x}"
+
+        def _adjust_for_bg(color, bg, min_ratio):
+            if _contrast_ratio(color, bg) >= min_ratio:
+                return color
+            bg_l = _rel_lum(_hex_to_rgb(bg))
+            target = "#ffffff" if bg_l < 0.5 else "#000000"
+            for t in (0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75):
+                cand = _blend(color, target, t)
+                if _contrast_ratio(cand, bg) >= min_ratio:
+                    return cand
+            return _blend(color, target, 0.85)
+
+        def _best_text_color(bg_color):
+            black = "#000000"
+            white = "#ffffff"
+            return white if _contrast_ratio(white, bg_color) >= _contrast_ratio(black, bg_color) else black
+
+        total = sum(v for _, v in plot_data)
+        if total <= 0:
+            self.canvas.create_text(w/2, h/2, text="[ 无数据 ]", font=c.FONT_TITLE, fill=c.COLOR_BORDER)
+            return
+
+        cx, cy = w / 2, h / 2
+        r = min(w, h) * 0.33
+        if r < 120:
+            r = 120
+        if r > min(w, h) * 0.42:
+            r = min(w, h) * 0.42
+
+        x0, y0, x1, y1 = cx - r, cy - r, cx + r, cy + r
+        palette = [c.COLOR_BAR, c.COLOR_ACCENT, c.COLOR_SECONDARY, c.COLOR_FG, "#6FB98F", "#E27D60", "#85DCB0", "#E8A87C"]
+        start = 90.0
+        text_color = "black" if self.current_theme == "light" else c.COLOR_FG
+        outline_color = c.COLOR_BORDER_HL if self.clear_mode else c.COLOR_BORDER_HL
+        outline_width = 2 if self.clear_mode else 2
+        bg_color = c.COLOR_BG
+
+        first_color = None
+        prev_color = None
+        n = len(plot_data)
+        outside = []
+        label_font = tkfont.Font(family=c.FONT_PIXEL[0], size=c.FONT_PIXEL[1], weight=c.FONT_PIXEL[2])
+        line_h = float(label_font.metrics("linespace"))
+        min_gap = max(18.0, line_h + 4.0)
+        y_top = 10.0
+        y_bottom = float(h) - 10.0
+        pad_x = 10.0
+
+        def _wrap_text(text, max_width):
+            if max_width <= 0:
+                return text, 1
+            if label_font.measure(text) <= max_width:
+                return text, 1
+            if " " in text:
+                tokens = text.split(" ")
+                joiner = " "
+            else:
+                tokens = list(text)
+                joiner = ""
+            lines = []
+            cur = ""
+            for tok in tokens:
+                candidate = tok if not cur else (cur + joiner + tok)
+                if label_font.measure(candidate) <= max_width:
+                    cur = candidate
+                    continue
+                if cur:
+                    lines.append(cur)
+                    cur = tok
+                else:
+                    lines.append(tok)
+                    cur = ""
+            if cur:
+                lines.append(cur)
+            return "\n".join(lines), max(1, len(lines))
+
+        for i, (name, val) in enumerate(plot_data):
+            extent = (val / total) * 360.0
+            if extent <= 0:
+                continue
+            base_idx = i % len(palette)
+            color = palette[base_idx]
+            if prev_color is not None and color == prev_color:
+                for j in range(1, len(palette) + 1):
+                    cand = palette[(base_idx + j) % len(palette)]
+                    if cand != prev_color:
+                        color = cand
+                        break
+            if first_color is None:
+                first_color = color
+            if i == n - 1 and n > 1 and color == first_color:
+                for j in range(1, len(palette) + 1):
+                    cand = palette[(base_idx + j) % len(palette)]
+                    if cand != prev_color and cand != first_color:
+                        color = cand
+                        break
+            if _contrast_ratio(color, bg_color) < 1.8:
+                chosen = None
+                for j in range(len(palette)):
+                    cand = palette[(base_idx + j) % len(palette)]
+                    if cand == prev_color or cand == first_color:
+                        continue
+                    if _contrast_ratio(cand, bg_color) >= 1.8:
+                        chosen = cand
+                        break
+                color = chosen if chosen else _adjust_for_bg(color, bg_color, 1.8)
+            group_tag = f"slicegrp_{i}"
+            if not self.clear_mode:
+                self.canvas.create_arc(x0 + 4, y0 + 4, x1 + 4, y1 + 4, start=start, extent=extent, fill=c.COLOR_SHADOW, outline="", style=tk.PIESLICE, tags=("slice_shadow", name, group_tag))
+            self.canvas.create_arc(
+                x0,
+                y0,
+                x1,
+                y1,
+                start=start,
+                extent=extent,
+                fill=color,
+                outline=outline_color,
+                width=outline_width,
+                style=tk.PIESLICE,
+                tags=("slice", name, group_tag),
+            )
+
+            mid = start + extent / 2.0
+            rad = math.radians(mid)
+            pct = (val / total) * 100.0
+            if extent < 22.0:
+                anchor_r = r * 0.92
+                x_anchor = cx + math.cos(rad) * anchor_r
+                y_anchor = cy - math.sin(rad) * anchor_r
+                x_out = cx + math.cos(rad) * (r * 1.18)
+                y_out = cy - math.sin(rad) * (r * 1.18)
+                dir_sign = 1 if math.cos(rad) >= 0 else -1
+                x_line2 = x_out + dir_sign * (r * 0.28)
+                outside.append({
+                    "side": "right" if dir_sign > 0 else "left",
+                    "y": y_out,
+                    "x_anchor": x_anchor,
+                    "y_anchor": y_anchor,
+                    "x_out": x_out,
+                    "x_line2": x_line2,
+                    "dir": dir_sign,
+                    "color": color,
+                    "text": f"{name}  {val:.1f}mm  {pct:.1f}%",
+                    "name": name,
+                    "group": group_tag,
+                })
+            else:
+                lx = cx + math.cos(rad) * (r * 0.62)
+                ly = cy - math.sin(rad) * (r * 0.62)
+                inside_text_color = _best_text_color(color)
+                if _contrast_ratio(inside_text_color, color) < 4.0:
+                    inside_text_color = text_color
+                self.canvas.create_text(
+                    lx,
+                    ly,
+                    text=f"{name}\n{val:.1f}mm\n{pct:.1f}%",
+                    font=c.FONT_PIXEL,
+                    fill=inside_text_color,
+                    tags=("slice_label", name, group_tag),
+                )
+            start += extent
+            prev_color = color
+
+        def _layout_side(items):
+            items.sort(key=lambda d: d["y"])
+            if not items:
+                return
+            prev = None
+            for d in items:
+                yv = d["y"]
+                if prev is not None:
+                    yv = max(yv, prev["y"] + prev["half_h"] + d["half_h"] + min_gap)
+                d["y"] = yv
+                prev = d
+            overflow = (items[-1]["y"] + items[-1]["half_h"]) - y_bottom
+            if overflow > 0:
+                for d in items:
+                    d["y"] -= overflow
+            underflow = y_top - (items[0]["y"] - items[0]["half_h"])
+            if underflow > 0:
+                for d in items:
+                    d["y"] += underflow
+
+        left = [d for d in outside if d["side"] == "left"]
+        right = [d for d in outside if d["side"] == "right"]
+
+        for d in left + right:
+            x_text = d["x_line2"] + d["dir"] * 6
+            max_w = (float(w) - pad_x) - x_text if d["dir"] > 0 else x_text - pad_x
+            wrapped, lines = _wrap_text(d["text"], max_w)
+            d["wrapped"] = wrapped
+            d["lines"] = lines
+            d["half_h"] = (lines * line_h) / 2.0
+
+        _layout_side(left)
+        _layout_side(right)
+
+        for d in left + right:
+            yv = d["y"]
+            x_text = d["x_line2"] + d["dir"] * 6
+            label_color = _adjust_for_bg(d.get("color") or text_color, bg_color, 3.0)
+            self.canvas.create_line(d["x_anchor"], d["y_anchor"], d["x_out"], yv, fill=label_color, width=1, tags=("slice_label", d["name"], d["group"]))
+            self.canvas.create_line(d["x_out"], yv, d["x_line2"], yv, fill=label_color, width=1, tags=("slice_label", d["name"], d["group"]))
+            anchor = "w" if d["dir"] > 0 else "e"
+            text_id = self.canvas.create_text(x_text, yv, text=d["wrapped"], font=c.FONT_PIXEL, fill=label_color, anchor=anchor, tags=("slice_label", d["name"], d["group"]))
+            self._pie_label_fulltext[text_id] = d["text"]
+
+    def _ensure_tooltip(self):
+        if self._tooltip_win:
+            return
+        win = tk.Toplevel(self.root)
+        win.withdraw()
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        lbl = tk.Label(win, font=c.FONT_PIXEL, bg=c.COLOR_BG, fg=c.COLOR_FG, bd=1, relief="solid", padx=6, pady=4)
+        lbl.pack()
+        self._tooltip_win = win
+        self._tooltip_label = lbl
+
+    def _hide_tooltip(self, event=None):
+        if self._tooltip_win:
+            self._tooltip_win.withdraw()
+
+    def _on_canvas_motion(self, event):
+        items = self.canvas.find_withtag("current")
+        if not items:
+            self._hide_tooltip()
+            return
+        item_id = items[0]
+        full = self._pie_label_fulltext.get(item_id)
+        if not full:
+            self._hide_tooltip()
+            return
+        self._ensure_tooltip()
+        self._tooltip_label.config(text=full)
+        x = self.root.winfo_rootx() + event.x + 16
+        y = self.root.winfo_rooty() + event.y + 16
+        self._tooltip_win.geometry(f"+{x}+{y}")
+        self._tooltip_win.deiconify()
+
     def on_canvas_click(self, event):
         item = self.canvas.find_closest(event.x, event.y)
         tags = self.canvas.gettags(item)
         if "bar" in tags:
-            self._drag_item, self._drag_city, self._drag_start = item, tags[1], (event.x, event.y)
+            self._drag_tag, self._drag_city, self._drag_start = item, tags[1], (event.x, event.y)
             self.canvas.itemconfig(item, fill=c.COLOR_SECONDARY)
+        elif "slice" in tags or "slice_label" in tags or "slice_shadow" in tags:
+            group_tag = None
+            for t in tags:
+                if t.startswith("slicegrp_"):
+                    group_tag = t
+                    break
+            if group_tag:
+                self._drag_tag, self._drag_city, self._drag_start = group_tag, tags[1], (event.x, event.y)
+                for it in self.canvas.find_withtag(group_tag):
+                    it_tags = self.canvas.gettags(it)
+                    if "slice" in it_tags:
+                        self.canvas.itemconfig(it, outline=c.COLOR_SECONDARY, width=3)
 
     def on_canvas_drag(self, event):
-        if hasattr(self, "_drag_item"):
-            self.canvas.move(self._drag_item, event.x - self._drag_start[0], event.y - self._drag_start[1])
+        if hasattr(self, "_drag_tag"):
+            self.canvas.move(self._drag_tag, event.x - self._drag_start[0], event.y - self._drag_start[1])
             self._drag_start = (event.x, event.y)
 
     def on_canvas_drop(self, event):
-        if hasattr(self, "_drag_item"):
+        if hasattr(self, "_drag_tag"):
             rx, ry = self.canvas.winfo_rootx() + event.x, self.canvas.winfo_rooty() + event.y
             
             # 检查是否拖入活跃区域
@@ -674,12 +990,13 @@ class WaterVisualizer:
                 self.move_city(self._drag_city, False)
             else:
                 self.draw_chart()
-            del self._drag_item
+            del self._drag_tag
 
     def on_canvas_double_click(self, event):
         item = self.canvas.find_closest(event.x, event.y)
         tags = self.canvas.gettags(item)
-        if "bar" in tags and not self.detail_city: self.show_detail(tags[1])
+        if ("bar" in tags or "slice" in tags or "slice_label" in tags or "slice_shadow" in tags) and not self.detail_city:
+            self.show_detail(tags[1])
 
     def _on_mousewheel(self, event, widget):
         """通用滚轮滚动处理方法，仅在溢出时生效"""
